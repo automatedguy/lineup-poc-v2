@@ -136,17 +136,24 @@ class ExplorerAgent:
     # ------------------------------------------------------------------
 
     def _save(self, url: str, screenshot: bytes, dom: str, network: list[dict], analysis: str) -> dict:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        slug = url.replace("https://", "").replace("http://", "").replace("/", "_")[:60]
-        prefix = f"{ts}_{slug}"
+        from urllib.parse import urlparse
 
-        img_path = self.output_dir / f"{prefix}.png"
+        parsed = urlparse(url)
+        domain = parsed.netloc or parsed.path
+        page = parsed.path.strip("/") or "index"
+        page = page.replace("/", "_")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        run_dir = self.output_dir / domain / page / ts
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        img_path = run_dir / "screenshot.png"
         img_path.write_bytes(screenshot)
 
-        dom_path = self.output_dir / f"{prefix}_dom.html"
+        dom_path = run_dir / "dom.html"
         dom_path.write_text(dom, encoding="utf-8")
 
-        net_path = self.output_dir / f"{prefix}_network.json"
+        net_path = run_dir / "network.json"
         net_path.write_text(json.dumps(network, indent=2), encoding="utf-8")
 
         record = {
@@ -158,7 +165,7 @@ class ExplorerAgent:
             "tester_analysis": analysis,
         }
 
-        dataset_path = self.output_dir / "dataset.jsonl"
+        dataset_path = run_dir / "dataset.jsonl"
         with open(dataset_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
