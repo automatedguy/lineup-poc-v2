@@ -108,9 +108,28 @@ class DesignerAgent:
             "Focus on the functionality visible on this page."
         )
 
+        system_msg = {
+            "role": "system",
+            "content": (
+                "/no_think\n"
+                "You are a senior QA test designer. You ONLY output valid JSON arrays. "
+                "No explanations, no notes, no markdown — just the JSON array."
+            ),
+        }
+
+        example_json = (
+            '[{{"id": "TC-001", "title": "Verify search filters results", '
+            '"priority": "critical", "category": "functional", '
+            '"preconditions": "Page is loaded with default data", '
+            '"steps": ["Click the search input field", "Type \'JavaScript\'", '
+            '"Observe the results table"], '
+            '"expected_result": "Only books with \'JavaScript\' in the title are shown", '
+            '"scope_rationale": "Core search functionality visible on this page"}}]'
+        )
+
         text = (
-            f"You are a senior QA test designer. Based on the following page analysis "
-            f"and the screenshot, propose test cases.\n\n"
+            f"Based on the following page analysis and the screenshot, "
+            f"propose test cases.\n\n"
             f"## Page Under Test\n"
             f"URL: {record['url']}\n\n"
             f"## QA Analysis (from visual inspection)\n"
@@ -125,23 +144,20 @@ class DesignerAgent:
             f"- medium: Visual consistency, secondary features, minor UX issues\n\n"
             f"## Instructions\n"
             f"1. Propose up to {self.max_cases} test cases, ordered by priority (critical first).\n"
-            f"2. For each test case, provide this exact JSON structure:\n"
-            f'   {{"id": "TC-001", "title": "...", "priority": "critical|high|medium", '
-            f'"category": "functional|visual|accessibility|performance|security", '
-            f'"preconditions": "...", "steps": ["step 1", "step 2"], '
-            f'"expected_result": "...", "scope_rationale": "..."}}\n'
-            f"3. Return ONLY a JSON array of test case objects. No other text.\n"
-            f"4. If something is out of scope, do NOT create a test case for it — "
-            f"instead mention it briefly in the scope_rationale of the most related test case.\n"
-            f"5. Focus on actionable, specific test cases. Each step must reference "
-            f"a concrete UI element from the analysis or screenshot."
+            f"2. Each test case MUST follow this exact JSON structure:\n"
+            f"   {example_json}\n"
+            f"3. IMPORTANT: Output ONLY a JSON array starting with [ and ending with ]. "
+            f"No text before or after. No markdown. No explanations. No notes.\n"
+            f"4. If something is out of scope, mention it briefly in the scope_rationale "
+            f"of the most related test case.\n"
+            f"5. Each step must reference a concrete UI element from the analysis or screenshot."
         )
 
         message = {"role": "user", "content": text}
         if screenshot_b64:
             message["images"] = [screenshot_b64]
 
-        return [message]
+        return [system_msg, message]
 
     # ------------------------------------------------------------------
     # LLM generation (local — Ollama + qwen3-vl)
