@@ -1,7 +1,7 @@
 """
-Explorer Agent — Navigates URLs, captures screenshot + DOM + network,
-and uses qwen3-vl:8b (local via Ollama) to describe the page
-from the perspective of a QA tester.
+Explorer Agent — Navigates URLs, captures screenshot + DOM + network
+via the Playwright MCP server, and uses qwen3-vl:8b (local via Ollama)
+to describe the page from the perspective of a QA tester.
 Stores everything in a JSONL run log.
 """
 
@@ -12,7 +12,8 @@ from datetime import datetime
 from pathlib import Path
 
 import ollama
-from playwright.async_api import async_playwright
+
+from src.mcp_client import McpClient
 
 
 class ExplorerAgent:
@@ -22,6 +23,7 @@ class ExplorerAgent:
         self.verbose = verbose
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._mcp = McpClient()
 
     def _log(self, msg: str):
         if self.verbose:
@@ -49,35 +51,15 @@ class ExplorerAgent:
         return results
 
     # ------------------------------------------------------------------
-    # Browser capture
+    # Browser capture (via MCP)
     # ------------------------------------------------------------------
 
     async def _capture(self, url: str) -> tuple[bytes, str, list[dict]]:
-        network_log: list[dict] = []
-
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch()
-            context = await browser.new_context(viewport={"width": 1280, "height": 720})
-            page = await context.new_page()
-
-            page.on("request", lambda req: network_log.append({
-                "direction": "request",
-                "url": req.url,
-                "method": req.method,
-                "resource_type": req.resource_type,
-            }))
-            page.on("response", lambda res: network_log.append({
-                "direction": "response",
-                "url": res.url,
-                "status": res.status,
-            }))
-
-            await page.goto(url, wait_until="networkidle", timeout=30_000)
-            screenshot = await page.screenshot(full_page=True)
-            dom = await page.content()
-            await browser.close()
-
-        return screenshot, dom, network_log
+        await self._mcp.navigate(url)
+        screenshot = await self._mcp.screenshot(full_page=True)
+        dom = await self._mcp.get_page_content()
+        network = await self._mcp.get_network_log()
+        return screenshot, dom, network
 
     # ------------------------------------------------------------------
     # Vision analysis (local — Ollama + qwen3-vl)
@@ -182,12 +164,15 @@ async def main():
     verbose = "-v" in args or "--verbose" in args
     urls = [a for a in args if not a.startswith("-")] or ["https://example.com"]
     agent = ExplorerAgent(verbose=verbose)
-    for url in urls:
-        print(f"Exploring {url} ...")
-        record = await agent.explore(url)
-        print(f"  Screenshot → {record['screenshot']}")
-        print(f"  Analysis:\n{record['tester_analysis'][:300]}...")
-        print()
+    try:
+        for url in urls:
+            print(f"Exploring {url} ...")
+            record = await agent.explore(url)
+            print(f"  Screenshot → {record['screenshot']}")
+            print(f"  Analysis:\n{record['tester_analysis'][:300]}...")
+            print()
+    finally:
+        await agent._mcp.close()
 
 
 if __name__ == "__main__":
