@@ -2,7 +2,7 @@
 Explorer Agent — Navigates URLs, captures screenshot + DOM + network,
 and uses qwen3-vl:8b (local via Ollama) to describe the page
 from the perspective of a QA tester.
-Stores everything in a JSONL dataset.
+Stores everything in a JSONL run log.
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from playwright.async_api import async_playwright
 
 class ExplorerAgent:
 
-    def __init__(self, output_dir: str = "dataset", model: str = "qwen3-vl:8b", verbose: bool = False):
+    def __init__(self, output_dir: str = "runs", model: str = "qwen3-vl:8b", verbose: bool = False):
         self.model = model
         self.verbose = verbose
         self.output_dir = Path(output_dir)
@@ -165,8 +165,8 @@ class ExplorerAgent:
             "tester_analysis": analysis,
         }
 
-        dataset_path = run_dir / "dataset.jsonl"
-        with open(dataset_path, "a", encoding="utf-8") as f:
+        run_log_path = run_dir / "run.jsonl"
+        with open(run_log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
         return record

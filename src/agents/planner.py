@@ -1,7 +1,7 @@
 """
 Planner Agent — Consumes explorer output (screenshot + QA analysis + network)
 and proposes prioritized test cases using qwen3-vl:8b (local via Ollama).
-Saves structured test plans alongside the explorer dataset.
+Saves structured test plans alongside the explorer run output.
 """
 
 import asyncio
@@ -18,7 +18,7 @@ class PlannerAgent:
 
     def __init__(
         self,
-        output_dir: str = "dataset",
+        output_dir: str = "runs",
         model: str = "qwen3-vl:8b",
         verbose: bool = False,
         max_cases: int = 10,
@@ -293,12 +293,12 @@ async def main():
             break
 
     if not args_clean:
-        print("Usage: python -m src.agents.planner <dataset.jsonl> [--scope 'text'] [--max-cases N] [-v]")
+        print("Usage: python -m src.agents.planner <run.jsonl> [--scope 'text'] [--max-cases N] [-v]")
         sys.exit(1)
 
     jsonl_path = Path(args_clean[0])
     if jsonl_path.is_dir():
-        jsonl_path = jsonl_path / "dataset.jsonl"
+        jsonl_path = jsonl_path / "run.jsonl"
 
     if not jsonl_path.exists():
         print(f"Error: {jsonl_path} not found")
@@ -327,7 +327,7 @@ async def main():
             records.append(rec)
 
     if not records:
-        print("No explorer records found in dataset.")
+        print("No explorer records found in run log.")
         sys.exit(1)
 
     agent = PlannerAgent(verbose=verbose, max_cases=max_cases)
