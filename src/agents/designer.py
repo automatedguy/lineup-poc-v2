@@ -37,7 +37,7 @@ class DesignerAgent:
     # ------------------------------------------------------------------
 
     async def plan(self, explorer_record: dict, scope: str | None = None) -> dict:
-        self._log(f"Planning test cases for {explorer_record['url']}...")
+        self._log(f"Designing test cases for {explorer_record['url']}...")
 
         screenshot_b64 = self._load_screenshot(explorer_record.get("screenshot", ""))
         network_summary = self._load_network(explorer_record.get("network", ""))
@@ -332,7 +332,7 @@ async def main():
 
     agent = DesignerAgent(verbose=verbose, max_cases=max_cases)
     for rec in records:
-        print(f"Planning test cases for {rec['url']} ...")
+        print(f"Designin test cases for {rec['url']} ...")
         result = await agent.plan(rec, scope=scope)
         print(f"  Test plan → {result['test_plan']}")
         print(f"  Cases: {result['test_case_count']} ({result['priorities']})")
