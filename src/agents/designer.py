@@ -1,5 +1,5 @@
 """
-Planner Agent — Consumes explorer output (screenshot + QA analysis + network)
+Designer Agent — Consumes explorer output (screenshot + QA analysis + network)
 and proposes prioritized test cases using qwen3-vl:8b (local via Ollama).
 Saves structured test plans alongside the explorer run output.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 import ollama
 
 
-class PlannerAgent:
+class DesignerAgent:
 
     def __init__(
         self,
@@ -109,7 +109,7 @@ class PlannerAgent:
         )
 
         text = (
-            f"You are a senior QA test planner. Based on the following page analysis "
+            f"You are a senior QA test designer. Based on the following page analysis "
             f"and the screenshot, propose test cases.\n\n"
             f"## Page Under Test\n"
             f"URL: {record['url']}\n\n"
@@ -293,7 +293,7 @@ async def main():
             break
 
     if not args_clean:
-        print("Usage: python -m src.agents.planner <run.jsonl> [--scope 'text'] [--max-cases N] [-v]")
+        print("Usage: python -m src.agents.designer <run.jsonl> [--scope 'text'] [--max-cases N] [-v]")
         sys.exit(1)
 
     jsonl_path = Path(args_clean[0])
@@ -330,7 +330,7 @@ async def main():
         print("No explorer records found in run log.")
         sys.exit(1)
 
-    agent = PlannerAgent(verbose=verbose, max_cases=max_cases)
+    agent = DesignerAgent(verbose=verbose, max_cases=max_cases)
     for rec in records:
         print(f"Planning test cases for {rec['url']} ...")
         result = await agent.plan(rec, scope=scope)
