@@ -5,7 +5,6 @@ Saves structured test plans alongside the explorer run output.
 """
 
 import asyncio
-import base64
 import json
 import re
 from datetime import datetime
@@ -19,7 +18,7 @@ class DesignerAgent:
     def __init__(
         self,
         output_dir: str = "runs",
-        model: str = "qwen3-vl:8b",
+        model: str = "qwen3:8b",
         verbose: bool = False,
         max_cases: int = 10,
     ):
@@ -39,11 +38,10 @@ class DesignerAgent:
     async def plan(self, explorer_record: dict, scope: str | None = None) -> dict:
         self._log(f"Designing test cases for {explorer_record['url']}...")
 
-        screenshot_b64 = self._load_screenshot(explorer_record.get("screenshot", ""))
         network_summary = self._load_network(explorer_record.get("network", ""))
 
         self._log(f"Building prompt (scope: {scope or 'auto-infer'})...")
-        messages = self._build_prompt(explorer_record, scope, network_summary, screenshot_b64)
+        messages = self._build_prompt(explorer_record, scope, network_summary)
 
         self._log(f"Generating test cases with {self.model}...")
         raw = self._generate(messages)
@@ -65,13 +63,6 @@ class DesignerAgent:
     # ------------------------------------------------------------------
     # Loaders
     # ------------------------------------------------------------------
-
-    def _load_screenshot(self, screenshot_path: str) -> str:
-        path = Path(screenshot_path)
-        if not path.exists():
-            self._log(f"Warning: screenshot not found at {screenshot_path}")
-            return ""
-        return base64.b64encode(path.read_bytes()).decode()
 
     def _load_network(self, network_path: str) -> str:
         path = Path(network_path)
@@ -102,7 +93,7 @@ class DesignerAgent:
     # Prompt
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, record: dict, scope: str | None, network_summary: str, screenshot_b64: str) -> list[dict]:
+    def _build_prompt(self, record: dict, scope: str | None, network_summary: str) -> list[dict]:
         scope_instruction = scope or (
             "Infer the test scope from the page analysis. "
             "Focus on the functionality visible on this page."
@@ -128,7 +119,7 @@ class DesignerAgent:
         )
 
         text = (
-            f"Based on the following page analysis and the screenshot, "
+            f"Based on the following page analysis, "
             f"propose test cases.\n\n"
             f"## Page Under Test\n"
             f"URL: {record['url']}\n\n"
@@ -150,12 +141,12 @@ class DesignerAgent:
             f"No text before or after. No markdown. No explanations. No notes.\n"
             f"4. If something is out of scope, mention it briefly in the scope_rationale "
             f"of the most related test case.\n"
-            f"5. Each step must reference a concrete UI element from the analysis or screenshot."
+            f"5. Each step must reference a concrete UI element from the analysis."
         )
 
+        self._log(f"text: {text}")
+
         message = {"role": "user", "content": text}
-        if screenshot_b64:
-            message["images"] = [screenshot_b64]
 
         return [system_msg, message]
 
