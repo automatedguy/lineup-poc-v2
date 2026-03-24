@@ -165,7 +165,7 @@ class ExplorerAgent:
             "tester_analysis": analysis,
         }
 
-        run_log_path = run_dir / "run.jsonl"
+        run_log_path = run_dir / "state.jsonl"
         with open(run_log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
