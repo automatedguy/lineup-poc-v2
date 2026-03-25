@@ -1,18 +1,25 @@
 """
-Explorer Agent — Navigates URLs, captures screenshot + DOM + network,
-and uses qwen3-vl:8b (local via Ollama) to describe the page
-from the perspective of a QA tester.
+Explorer Agent — Navigates URLs, captures screenshot + accessibility snapshot + network
+via the Playwright MCP server, and uses qwen3-vl:8b (local via Ollama) to describe
+the page from the perspective of a QA tester.
 Stores everything in a JSONL run log.
 """
 
 import asyncio
 import base64
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
 import ollama
-from playwright.async_api import async_playwright
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+MCP_SERVER = StdioServerParameters(
+    command="npx",
+    args=["@playwright/mcp@latest"]
+)
 
 
 class ExplorerAgent:
@@ -32,52 +39,89 @@ class ExplorerAgent:
     # ------------------------------------------------------------------
 
     async def explore(self, url: str) -> dict:
-        self._log(f"Capturing {url} (screenshot, DOM, network)...")
-        screenshot, dom, network = await self._capture(url)
-        self._log(f"Capture done — {len(network)} requests logged")
+        async with stdio_client(MCP_SERVER) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                self._log(f"Capturing {url} (screenshot, snapshot, network)...")
+                screenshot, snapshot, network = await self._capture(session, url)
+                self._log(f"Capture done — {len(network)} requests logged")
+
         self._log(f"Analyzing screenshot with {self.model}...")
         analysis = self._analyze(screenshot, url)
         self._log("Analysis complete, saving results...")
-        record = self._save(url, screenshot, dom, network, analysis)
+        record = self._save(url, screenshot, snapshot, network, analysis)
         self._log(f"Saved to {record['screenshot']}")
         return record
 
     async def explore_many(self, urls: list[str]) -> list[dict]:
+        captures = []
+        async with stdio_client(MCP_SERVER) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                for url in urls:
+                    self._log(f"Capturing {url} (screenshot, snapshot, network)...")
+                    screenshot, snapshot, network = await self._capture(session, url)
+                    self._log(f"Capture done — {len(network)} requests logged")
+                    captures.append((url, screenshot, snapshot, network))
+
         results = []
-        for url in urls:
-            results.append(await self.explore(url))
+        for url, screenshot, snapshot, network in captures:
+            self._log(f"Analyzing screenshot with {self.model}...")
+            analysis = self._analyze(screenshot, url)
+            self._log("Analysis complete, saving results...")
+            record = self._save(url, screenshot, snapshot, network, analysis)
+            self._log(f"Saved to {record['screenshot']}")
+            results.append(record)
         return results
 
     # ------------------------------------------------------------------
-    # Browser capture
+    # Browser capture via Playwright MCP
     # ------------------------------------------------------------------
 
-    async def _capture(self, url: str) -> tuple[bytes, str, list[dict]]:
-        network_log: list[dict] = []
+    async def _capture(self, session: ClientSession, url: str) -> tuple[bytes, str, list[dict]]:
+        # Navigate to the URL
+        await session.call_tool("browser_navigate", {"url": url})
 
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch()
-            context = await browser.new_context(viewport={"width": 1280, "height": 720})
-            page = await context.new_page()
+        # Take screenshot
+        screenshot_result = await session.call_tool("browser_take_screenshot")
+        screenshot = b""
+        for block in screenshot_result.content:
+            if block.type == "image":
+                screenshot = base64.b64decode(block.data)
+                break
+            elif block.type == "text":
+                # Fallback: read screenshot from file path in MCP response
+                match = re.search(r'\(([^)]+\.png)\)', block.text)
+                if match:
+                    path = Path(match.group(1))
+                    if not path.is_absolute():
+                        path = Path("/tmp") / Path(match.group(1)).name
+                    if path.exists():
+                        screenshot = path.read_bytes()
+                        self._log(f"Screenshot read from {path}")
+                        break
+        self._log(f"Screenshot: {len(screenshot)} bytes")
 
-            page.on("request", lambda req: network_log.append({
-                "direction": "request",
-                "url": req.url,
-                "method": req.method,
-                "resource_type": req.resource_type,
-            }))
-            page.on("response", lambda res: network_log.append({
-                "direction": "response",
-                "url": res.url,
-                "status": res.status,
-            }))
+        # Get accessibility snapshot
+        snapshot_result = await session.call_tool("browser_snapshot")
+        snapshot = ""
+        for block in snapshot_result.content:
+            if block.type == "text":
+                snapshot = block.text
+                break
 
-            await page.goto(url, wait_until="networkidle", timeout=30_000)
-            screenshot = await page.screenshot(full_page=True)
-            dom = await page.content()
-            await browser.close()
+        # Get network requests
+        network_result = await session.call_tool("browser_network_requests")
+        network = []
+        for block in network_result.content:
+            if block.type == "text":
+                try:
+                    network = json.loads(block.text)
+                except json.JSONDecodeError:
+                    network = [{"raw": block.text}]
+                break
 
-        return screenshot, dom, network_log
+        return screenshot, snapshot, network
 
     # ------------------------------------------------------------------
     # Vision analysis (local — Ollama + qwen3-vl)
@@ -108,7 +152,6 @@ class ExplorerAgent:
             in_thinking = False
             for chunk in ollama.chat(model=self.model, messages=messages, stream=True):
                 token = chunk["message"]["content"]
-                # qwen3 emits <think>...</think> blocks for reasoning
                 if "<think>" in token:
                     in_thinking = True
                     print("  [thinking] ", end="", flush=True)
@@ -135,7 +178,7 @@ class ExplorerAgent:
     # Persistence
     # ------------------------------------------------------------------
 
-    def _save(self, url: str, screenshot: bytes, dom: str, network: list[dict], analysis: str) -> dict:
+    def _save(self, url: str, screenshot: bytes, snapshot: str, network: list[dict], analysis: str) -> dict:
         from urllib.parse import urlparse
 
         parsed = urlparse(url)
@@ -150,8 +193,8 @@ class ExplorerAgent:
         img_path = run_dir / "screenshot.png"
         img_path.write_bytes(screenshot)
 
-        dom_path = run_dir / "dom.html"
-        dom_path.write_text(dom, encoding="utf-8")
+        snapshot_path = run_dir / "snapshot.txt"
+        snapshot_path.write_text(snapshot, encoding="utf-8")
 
         net_path = run_dir / "network.json"
         net_path.write_text(json.dumps(network, indent=2), encoding="utf-8")
@@ -160,7 +203,7 @@ class ExplorerAgent:
             "url": url,
             "timestamp": ts,
             "screenshot": str(img_path),
-            "dom": str(dom_path),
+            "dom": str(snapshot_path),
             "network": str(net_path),
             "tester_analysis": analysis,
         }
