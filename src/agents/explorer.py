@@ -186,6 +186,57 @@ class ExplorerAgent:
         return response["message"]["content"]
 
     # ------------------------------------------------------------------
+    # Snapshot parsing
+    # ------------------------------------------------------------------
+
+    def _parse_snapshot(self, raw: str) -> list[dict]:
+        """Parse Playwright accessibility snapshot into structured elements."""
+        elements = []
+        yaml_match = re.search(r'```yaml\n(.*?)```', raw, re.DOTALL)
+        if not yaml_match:
+            return elements
+
+        current = None
+        for line in yaml_match.group(1).splitlines():
+            stripped = line.lstrip()
+            if not stripped.startswith('- '):
+                continue
+            content = stripped[2:]
+            depth = (len(line) - len(stripped)) // 2
+
+            # Property lines belong to current element
+            if content.startswith('/url:'):
+                if current:
+                    current['url'] = content[5:].strip()
+                continue
+            if content.startswith('text:'):
+                if current:
+                    current['text'] = content[5:].strip()
+                continue
+
+            # Parse element: role "name" [ref=eN] [attr=val]
+            part = content.rstrip(':').strip()
+            role_m = re.match(r'(\w+)', part)
+            if not role_m:
+                continue
+
+            elem = {"role": role_m.group(1), "depth": depth}
+            name_m = re.search(r'"([^"]*)"', part)
+            if name_m:
+                elem["name"] = name_m.group(1)
+            ref_m = re.search(r'\[ref=(\w+)\]', part)
+            if ref_m:
+                elem["ref"] = ref_m.group(1)
+            for attr_m in re.finditer(r'\[(\w+)(?:=([^\]]+))?\]', part):
+                if attr_m.group(1) != 'ref':
+                    elem.setdefault("attrs", {})[attr_m.group(1)] = attr_m.group(2) or True
+
+            current = elem
+            elements.append(elem)
+
+        return elements
+
+    # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
@@ -204,8 +255,9 @@ class ExplorerAgent:
         img_path = run_dir / "screenshot.png"
         img_path.write_bytes(screenshot)
 
-        snapshot_path = run_dir / "snapshot.txt"
-        snapshot_path.write_text(snapshot, encoding="utf-8")
+        snapshot_path = run_dir / "snapshot.json"
+        snapshot_data = self._parse_snapshot(snapshot)
+        snapshot_path.write_text(json.dumps(snapshot_data, indent=2), encoding="utf-8")
 
         net_path = run_dir / "network.json"
         net_path.write_text(json.dumps(network, indent=2), encoding="utf-8")
