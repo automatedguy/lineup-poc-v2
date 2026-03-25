@@ -38,10 +38,8 @@ class DesignerAgent:
     async def plan(self, explorer_record: dict, scope: str | None = None) -> dict:
         self._log(f"Designing test cases for {explorer_record['url']}...")
 
-        network_summary = self._load_network(explorer_record.get("network", ""))
-
         self._log(f"Building prompt (scope: {scope or 'auto-infer'})...")
-        messages = self._build_prompt(explorer_record, scope, network_summary)
+        messages = self._build_prompt(explorer_record, scope)
 
         self._log(f"Generating test cases with {self.model}...")
         raw = self._generate(messages)
@@ -61,39 +59,10 @@ class DesignerAgent:
         return results
 
     # ------------------------------------------------------------------
-    # Loaders
-    # ------------------------------------------------------------------
-
-    def _load_network(self, network_path: str) -> str:
-        path = Path(network_path)
-        if not path.exists():
-            return "No network data available."
-
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return "No network data available."
-
-        static_ext = {".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".woff", ".woff2", ".ttf", ".ico"}
-        api_endpoints = set()
-        for entry in data:
-            if entry.get("direction") != "request":
-                continue
-            url = entry.get("url", "")
-            if entry.get("resource_type") in ("document", "xhr", "fetch"):
-                api_endpoints.add(f"{entry.get('method', 'GET')} {url}")
-            elif not any(url.lower().endswith(ext) for ext in static_ext):
-                api_endpoints.add(f"{entry.get('method', 'GET')} {url}")
-
-        if not api_endpoints:
-            return "No API calls detected (static page)."
-        return "API endpoints found:\n" + "\n".join(f"- {ep}" for ep in sorted(api_endpoints))
-
-    # ------------------------------------------------------------------
     # Prompt
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, record: dict, scope: str | None, network_summary: str) -> list[dict]:
+    def _build_prompt(self, record: dict, scope: str | None) -> list[dict]:
         scope_instruction = scope or (
             "Infer the test scope from the page analysis. "
             "Focus on the functionality visible on this page."
@@ -125,8 +94,6 @@ class DesignerAgent:
             f"URL: {record['url']}\n\n"
             f"## QA Analysis (from visual inspection)\n"
             f"{record.get('tester_analysis', 'No analysis available.')}\n\n"
-            f"## Network Activity Summary\n"
-            f"{network_summary}\n\n"
             f"## Scope\n"
             f"{scope_instruction}\n\n"
             f"## Priority Criteria\n"
