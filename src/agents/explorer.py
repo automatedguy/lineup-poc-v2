@@ -46,9 +46,13 @@ class ExplorerAgent:
                 screenshot, snapshot, network = await self._capture(session, url)
                 self._log(f"Capture done — {len(network)} requests logged")
 
-        self._log(f"Analyzing screenshot with {self.model}...")
-        analysis = self._analyze(screenshot, url)
-        self._log("Analysis complete, saving results...")
+        if screenshot:
+            self._log(f"Analyzing screenshot with {self.model}...")
+            analysis = self._analyze(screenshot, url)
+            self._log("Analysis complete, saving results...")
+        else:
+            self._log("WARNING: No screenshot captured, skipping vision analysis")
+            analysis = "Screenshot capture failed — no visual analysis available."
         record = self._save(url, screenshot, snapshot, network, analysis)
         self._log(f"Saved to {record['screenshot']}")
         return record
@@ -78,47 +82,54 @@ class ExplorerAgent:
     # Browser capture via Playwright MCP
     # ------------------------------------------------------------------
 
+    async def _call(self, session: ClientSession, tool: str, args: dict | None = None) -> object:
+        """Call an MCP tool and log errors (suppresses known non-fatal errors)."""
+        result = await session.call_tool(tool, args or {})
+        if result.isError:
+            text = ""
+            for block in result.content:
+                if block.type == "text":
+                    text = block.text
+            # browser_run_code returns TypeError for screenshot Buffer — non-fatal, file is saved
+            if "is not a function" not in text:
+                self._log(f"ERROR from {tool}: {text[:300]}")
+        return result
+
     async def _capture(self, session: ClientSession, url: str) -> tuple[bytes, str, list[dict]]:
         # Navigate to the URL
-        await session.call_tool("browser_navigate", {"url": url})
+        nav = await self._call(session, "browser_navigate", {"url": url})
+        for block in nav.content:
+            if block.type == "text":
+                self._log(f"Navigate: {block.text[:150]}")
 
-        # Take screenshot
-        screenshot_result = await session.call_tool("browser_take_screenshot")
-        screenshot = b""
-        for block in screenshot_result.content:
-            if block.type == "image":
-                screenshot = base64.b64decode(block.data)
-                break
-            elif block.type == "text":
-                # Fallback: read screenshot from file path in MCP response
-                match = re.search(r'\(([^)]+\.png)\)', block.text)
-                if match:
-                    path = Path(match.group(1))
-                    if not path.is_absolute():
-                        path = Path("/tmp") / Path(match.group(1)).name
-                    if path.exists():
-                        screenshot = path.read_bytes()
-                        self._log(f"Screenshot read from {path}")
-                        break
+        # Take screenshot (browser_take_screenshot has a 5s timeout, too short for heavy pages)
+        tmp_png = f"/tmp/explorer_{id(session)}.png"
+        await self._call(session, "browser_run_code", {
+            "code": f"await page.screenshot({{ path: '{tmp_png}', fullPage: true, timeout: 30000 }})"
+        })
+        tmp = Path(tmp_png)
+        screenshot = tmp.read_bytes() if tmp.exists() else b""
+        if tmp.exists():
+            tmp.unlink()
         self._log(f"Screenshot: {len(screenshot)} bytes")
 
         # Get accessibility snapshot
-        snapshot_result = await session.call_tool("browser_snapshot")
+        snap = await self._call(session, "browser_snapshot")
         snapshot = ""
-        for block in snapshot_result.content:
+        for block in snap.content:
             if block.type == "text":
                 snapshot = block.text
                 break
 
-        # Get network requests
-        network_result = await session.call_tool("browser_network_requests")
+        # Get network requests — MCP returns "[METHOD] URL" lines
+        net = await self._call(session, "browser_network_requests")
         network = []
-        for block in network_result.content:
+        for block in net.content:
             if block.type == "text":
-                try:
-                    network = json.loads(block.text)
-                except json.JSONDecodeError:
-                    network = [{"raw": block.text}]
+                for line in block.text.strip().splitlines():
+                    m = re.match(r'\[(\w+)\]\s+(.*)', line)
+                    if m:
+                        network.append({"method": m.group(1), "url": m.group(2)})
                 break
 
         return screenshot, snapshot, network
