@@ -12,6 +12,8 @@ from pathlib import Path
 
 import ollama
 
+from src.agents.actions import ACTIONS, get_action_catalog_prompt
+
 
 class DesignerAgent:
 
@@ -77,12 +79,17 @@ class DesignerAgent:
             ),
         }
 
+        action_catalog = get_action_catalog_prompt()
+
         example_json = (
             '[{{"id": "TC-001", "title": "Verify search filters results", '
             '"priority": "critical", "category": "functional", '
             '"preconditions": "Page is loaded with default data", '
-            '"steps": ["Click the search input field", "Type \'JavaScript\'", '
-            '"Observe the results table"], '
+            '"steps": ['
+            '{{"action": "click", "element": "Search input", "role": "textbox"}},'
+            '{{"action": "fill", "element": "Search input", "role": "textbox", "value": "JavaScript"}},'
+            '{{"action": "assert_text", "element": "Results table", "role": "table", "expected": "JavaScript"}}'
+            '], '
             '"expected_result": "Only books with \'JavaScript\' in the title are shown", '
             '"scope_rationale": "Core search functionality visible on this page"}}]'
         )
@@ -96,6 +103,8 @@ class DesignerAgent:
             f"{record.get('tester_analysis', 'No analysis available.')}\n\n"
             f"## Scope\n"
             f"{scope_instruction}\n\n"
+            f"## Available Actions\n"
+            f"{action_catalog}\n\n"
             f"## Priority Criteria\n"
             f"- critical: Core user journeys, authentication, data integrity — if this fails, the feature is broken\n"
             f"- high: Error handling, input validation, accessibility violations — significant quality issues\n"
@@ -104,11 +113,14 @@ class DesignerAgent:
             f"1. Propose up to {self.max_cases} test cases, ordered by priority (critical first).\n"
             f"2. Each test case MUST follow this exact JSON structure:\n"
             f"   {example_json}\n"
-            f"3. IMPORTANT: Output ONLY a JSON array starting with [ and ending with ]. "
+            f"3. Each step MUST be an object with an \"action\" field matching one of the available actions above, "
+            f"plus the required params for that action. Include \"element\" (display name) and \"role\" "
+            f"(accessibility role like button, textbox, link, checkbox, combobox, etc.) for element-based actions.\n"
+            f"4. IMPORTANT: Output ONLY a JSON array starting with [ and ending with ]. "
             f"No text before or after. No markdown. No explanations. No notes.\n"
-            f"4. If something is out of scope, mention it briefly in the scope_rationale "
+            f"5. If something is out of scope, mention it briefly in the scope_rationale "
             f"of the most related test case.\n"
-            f"5. Each step must reference a concrete UI element from the analysis."
+            f"6. Each step must reference a concrete UI element from the analysis."
         )
 
         self._log(f"text: {text}")
